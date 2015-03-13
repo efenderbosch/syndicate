@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans-2.5.xsd"
+       default-init-method="init">
+
+	<bean id="testThreads" class="java.lang.Integer">
+		<constructor-arg value="10"/>
+	</bean>
+
+	<bean id="testIterations" class="java.lang.Integer">
+		<constructor-arg value="1000"/>
+	</bean>
+
+<!--
+    <bean id="tripleDES" class="net.fender.crypto.CryptoUtil">
+    	<property name="algorithm" value="TripleDES"/>
+    </bean>
+
+    <bean id="tripleDESkey" factory-bean="tripleDES" factory-method="getKey">
+    	<constructor-arg value="kNLvsG7CsgkOgGg2FGvdApY97zYUHYUR"/>
+    </bean>
+-->
+
+	<bean id="baseConnectionFactory" class="net.fender.sql.DriverConnectionFactory" abstract="true">
+		<property name="driverClassName" value="com.mysql.jdbc.Driver"/>
+		<property name="properties">
+			<props>
+				<prop key="encryptedUser">kcN+XO9qpi0=</prop>
+				<prop key="encryptedPassword">sb8ZflMYtSs=</prop>
+				<prop key="autoReconnect">true</prop>
+				<prop key="zeroDateTimeBehavior">convertToNull</prop>
+				<prop key="cachePrepStmts">true</prop>
+				<prop key="prepStmtCacheSqlLimit">2048</prop>
+			</props>
+		</property>
+		<property name="autoCommit" value="true"/>
+		<property name="transactionIsolation" value="READ_COMMITTED"/>
+		<!--<property name="cryptoUtil" ref="tripleDES"/>
+		    <property name="key" ref="tripleDESkey"/> -->
+		<property name="systemPropertyKeyName" value="myKey"/>
+	</bean>
+
+	<bean id="masterConnectionFactory" class="net.fender.sql.DriverConnectionFactory" parent="baseConnectionFactory">
+		<property name="url" value="jdbc:mysql://127.0.0.1:3306"/>
+		<property name="readOnly" value="false"/>
+	</bean>
+	
+	<bean id="slaveOneConnectionFactory" class="net.fender.sql.DriverConnectionFactory" parent="baseConnectionFactory">
+		<property name="url" value="jdbc:mysql://127.0.0.1:3306"/>
+		<property name="readOnly" value="true"/>
+	</bean>
+
+	<bean id="slaveTwoConnectionFactory" class="net.fender.sql.DriverConnectionFactory" parent="baseConnectionFactory">
+		<property name="url" value="jdbc:mysql://127.0.0.1:3306"/>
+		<property name="readOnly" value="true"/>
+	</bean>
+
+	<bean id="masterPoolableConnectionFactory" class="net.fender.sql.PoolableConnectionFactory">
+		<property name="connectionFactory" ref="masterConnectionFactory"/>
+	</bean>
+
+	<bean id="slaveOnePoolableConnectionFactory" class="net.fender.sql.PoolableConnectionFactory">
+		<property name="connectionFactory" ref="slaveOneConnectionFactory"/>
+	</bean>
+
+	<bean id="slaveTwoPoolableConnectionFactory" class="net.fender.sql.PoolableConnectionFactory">
+		<property name="connectionFactory" ref="slaveTwoConnectionFactory"/>
+	</bean>
+
+	<bean id="baseWriteConnectionPool" class="net.fender.pool.SimpleObjectPool" abstract="true">
+		<property name="lockTimeout" value="100"/>
+		<property name="size" value="20"/>
+	</bean>
+
+	<bean id="baseReadConnectionPool" class="net.fender.pool.SimpleObjectPool" abstract="true">
+		<property name="lockTimeout" value="100"/>
+		<property name="size" value="2"/>
+	</bean>
+
+	<bean id="masterConnectionPool" class="net.fender.pool.SimpleObjectPool" parent="baseWriteConnectionPool">
+		<property name="factory" ref="masterPoolableConnectionFactory"/>
+	</bean>
+
+	<bean id="slaveOneConnectionPool" class="net.fender.pool.SimpleObjectPool" parent="baseReadConnectionPool">
+		<property name="factory" ref="slaveOnePoolableConnectionFactory"/>
+	</bean>
+
+	<bean id="slaveTwoConnectionPool" class="net.fender.pool.SimpleObjectPool" parent="baseReadConnectionPool">
+		<property name="factory" ref="slaveTwoPoolableConnectionFactory"/>
+	</bean>
+
+	<bean id="jndiProperties" class="java.util.Properties">
+		<constructor-arg>
+			<props>
+				<prop key="java.naming.factory.initial">com.caucho.naming.InitialContextFactoryImpl</prop>
+				<prop key="java.naming.provider.url">tcp://127.0.0.1:8080</prop>
+			</props>
+		</constructor-arg>
+	</bean>
+
+	<bean id="baseDataSource" class="net.fender.sql.ManagedConnectionDataSource" abstract="true">
+		<property name="validateConnectionOnAquire" value="true"/>
+		<property name="validationQuery" value="select 1 from dual"/>
+		<property name="jndiProperties" ref="jndiProperties"/>
+	</bean>
+
+	<bean id="masterDataSource" class="net.fender.sql.PoolingDataSource" parent="baseDataSource">
+		<property name="connectionPool" ref="masterConnectionPool"/>
+	</bean>
+
+	<bean id="slaveOneConnectionPoolDataSource" class="net.fender.sql.PoolingDataSource" parent="baseDataSource">
+		<property name="connectionPool" ref="slaveOneConnectionPool"/>
+	</bean>
+
+	<bean id="slaveTwoConnectionPoolDataSource" class="net.fender.sql.PoolingDataSource" parent="baseDataSource">
+		<property name="connectionPool" ref="slaveTwoConnectionPool"/>
+	</bean>
+
+	<bean id="roundRobinLoadBalancingDataSource" class="net.fender.sql.RoundRobinLoadBalancingDataSource" parent="baseDataSource">
+		<!--<property name="jndiName" value="roundRobinLoadBalancingDataSource"/>-->
+		<property name="dataSources">
+			<list>
+				<ref bean="slaveOneConnectionPoolDataSource"/>
+				<ref bean="slaveTwoConnectionPoolDataSource"/>
+			</list>
+		</property>
+	</bean>
+
+	<bean id="weightedLoadBalancingDataSource" class="net.fender.sql.WeightedLoadBalancingDataSource" parent="baseDataSource">
+		<!--<property name="jndiName" value="weightedLoadBalancingDataSource"/>-->
+		<property name="dataSources">
+			<list>
+				<ref bean="slaveOneConnectionPoolDataSource"/>
+				<ref bean="slaveTwoConnectionPoolDataSource"/>
+			</list>
+		</property>
+		<property name="weights" value="1, 2"/>
+		<property name="timesToRetry" value="1"/>
+	</bean>
+
+	<bean id="singleConnectionDataSource" class="net.fender.sql.SingleConnectionDataSource" parent="baseDataSource">
+		<property name="connectionFactory" ref="masterConnectionFactory"/>	
+		<property name="lockTimeout" value="100"/>
+	</bean>
+
+	<bean id="singleConnectionPool" class="net.fender.pool.SingleObjectPool">
+		<property name="factory" ref="masterPoolableConnectionFactory"/>
+		<property name="lockTimeout" value="100"/>
+	</bean>
+
+	<bean id="singleConnectionPoolDataSource" class="net.fender.sql.PoolingDataSource" parent="baseDataSource">
+		<property name="connectionPool" ref="singleConnectionPool"/>
+	</bean>
+
+</beans>
